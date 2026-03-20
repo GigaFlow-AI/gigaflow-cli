@@ -1,0 +1,42 @@
+# Default transform config for Arize Phoenix (OpenInference schema).
+#
+# This file controls how Arize Phoenix spans are mapped to Gigaflow primitives.
+# Copy and edit it to customise field paths for your own setup, then pass the
+# path during `gigaflow setup` when prompted for a transform file.
+#
+# Filter fields reference top-level columns in the spans table.
+# Mapping values are dot-notation paths resolved against each row; nested JSON
+# columns (e.g. `attributes`) are traversed automatically.
+#
+# Arize Phoenix span kinds: LLM, TOOL, AGENT, RETRIEVER, EMBEDDING, CHAIN
+
+version: "1.0"
+source: arize_phoenix
+
+primitives:
+  llm_call:
+    filter:
+      field: span_kind
+      value: "LLM"
+    mapping:
+      model:             attributes.llm.model_name
+      input:             attributes.input.value
+      completion:        attributes.output.value
+      prompt_tokens:     attributes.llm.token_count.prompt
+      completion_tokens: attributes.llm.token_count.completion
+
+  tool_invocation:
+    filter:
+      field: span_kind
+      value: "TOOL"
+    mapping:
+      tool_name:   attributes.tool.name
+      tool_input:  attributes.input.value
+      tool_output: attributes.output.value
+
+  user_input:
+    filter:
+      field: span_kind
+      value: "AGENT"
+    mapping:
+      content: attributes.input.value
