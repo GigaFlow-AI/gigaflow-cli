@@ -42,7 +42,9 @@ class TestDefaultTransformContent:
 
     def test_filter_values_use_openinference_conventions(self, raw):
         assert 'value: "LLM"' in raw
-        assert 'value: "TOOL"' in raw
+        # TOOL and RETRIEVER span_kinds both map to tool_invocation via a list filter
+        assert '"TOOL"' in raw
+        assert '"RETRIEVER"' in raw
         assert 'value: "AGENT"' in raw
 
     def test_llm_call_maps_completion(self, raw):

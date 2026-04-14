@@ -28,11 +28,12 @@ primitives:
   tool_invocation:
     filter:
       field: span_kind
-      value: "TOOL"
+      value: ["TOOL", "RETRIEVER"]
     mapping:
       tool_name:   attributes.tool.name
       tool_input:  attributes.input.value
       tool_output: attributes.output.value
+      documents:   attributes.retrieval.documents
 
   user_input:
     filter:

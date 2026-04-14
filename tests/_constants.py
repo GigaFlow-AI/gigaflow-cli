@@ -1,6 +1,6 @@
 """Shared test constants (imported by both conftest.py and test modules)."""
-from pathlib import Path
 import sys
+from pathlib import Path
 
 MOCK_PROJECT_ID    = "aaaaaaaa-0000-0000-0000-000000000001"
 MOCK_DATASOURCE_ID = "bbbbbbbb-0000-0000-0000-000000000002"

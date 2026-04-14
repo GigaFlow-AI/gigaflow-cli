@@ -2,8 +2,6 @@
 
 from pathlib import Path
 
-import pytest
-
 from gigaflow._setup import load_env_file
 
 

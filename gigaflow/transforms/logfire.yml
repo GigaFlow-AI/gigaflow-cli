@@ -1,0 +1,77 @@
+# Gigaflow built-in transform config for Pydantic Logfire.
+#
+# Use this when your agent is instrumented with pydantic-ai + logfire.
+# Traces are read from Logfire's HTTP Query API (not PostgreSQL).
+# Gigaflow's logfire datasource type handles the API connection.
+#
+# Span classification uses span_name prefix matching (mode: prefix)
+# because pydantic-ai emits consistent span name prefixes:
+#   "model request" → llm_call
+#   "running tool"  → tool_invocation
+#   "agent run"     → user_input (root span carries the user's query)
+#
+# Attribute paths use OTel GenAI semantic conventions (gen_ai.*) which
+# pydantic-ai emits natively. The logfire reader expands flat dotted
+# OTel keys into nested dicts before the transform runs, so dot-notation
+# paths work the same way as with Arize Phoenix.
+#
+# To use this built-in config: leave the transform file blank during
+# `gigaflow setup` and select "logfire" as the source, or set
+# TRANSFORM_CONFIG=logfire in gigaflow.env to load this file automatically.
+#
+version: "1"
+source: "logfire"
+
+primitives:
+
+  # -------------------------------------------------------------------------
+  # user_input — the root agent span carries the user's original query.
+  # pydantic-ai's "agent run" span is the top-level span for each invocation.
+  # Its system_instructions hold the agent's persona; user_prompt is the query.
+  # -------------------------------------------------------------------------
+  user_input:
+    filter:
+      field: "span_name"
+      value: "agent run"
+      mode: "exact"
+    mapping:
+      content:  "attributes.pydantic_ai.user_prompt"
+      message:  "attributes.pydantic_ai.user_prompt"
+
+  # -------------------------------------------------------------------------
+  # llm_call — every "model request" span is an LLM completion.
+  # pydantic-ai emits one per model call with full GenAI semantic attributes.
+  # The span_name may include the model name (e.g. "model request (gpt-4o)"),
+  # so prefix matching captures all variants cleanly.
+  # -------------------------------------------------------------------------
+  llm_call:
+    filter:
+      field: "span_name"
+      value: "model request"
+      mode: "prefix"
+    mapping:
+      model:             "attributes.gen_ai.request.model"
+      provider:          "attributes.gen_ai.system"
+      input:             "attributes.gen_ai.input.messages"
+      messages:          "attributes.gen_ai.input.messages"
+      completion:        "attributes.gen_ai.output.messages"
+      response:          "attributes.gen_ai.output.messages"
+      prompt_tokens:     "attributes.gen_ai.usage.input_tokens"
+      completion_tokens: "attributes.gen_ai.usage.output_tokens"
+
+  # -------------------------------------------------------------------------
+  # tool_invocation — every "running tool: <name>" span is a tool call.
+  # The tool name is embedded in the span_name (prefix match captures all tools).
+  # gen_ai.tool.name holds the bare name; tool_arguments and tool_response
+  # hold the input/output as set by the pydantic-ai logfire integration (v2).
+  # -------------------------------------------------------------------------
+  tool_invocation:
+    filter:
+      field: "span_name"
+      value: "running tool"
+      mode: "prefix"
+    mapping:
+      tool_name:   "attributes.gen_ai.tool.name"
+      tool_input:  "attributes.tool_arguments"
+      tool_output: "attributes.tool_response"
+      result:      "attributes.tool_response"

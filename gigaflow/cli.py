@@ -2,12 +2,15 @@
 gigaflow — CLI entry point.
 
 Commands:
-  gigaflow run aif [TRACE_ID]        Run AIF analysis (interactive if TRACE_ID omitted)
   gigaflow setup                     Configure GigaFlow with an Arize Phoenix datasource
   gigaflow sync                      Re-sync traces from the configured datasource
+  gigaflow ui                        Open the traces dashboard in the browser
   gigaflow traces                    List all traces (auto-syncs first)
-  gigaflow spans <trace_id>          List spans for a trace (auto-syncs first)
-  gigaflow inspect <trace_id>        Visualize a trace (orchestration graph + full span data)
+  gigaflow spans <trace_id>          List spans for a trace
+  gigaflow query "<SQL>"             Run SQL SELECT against the trace_metrics view
+  gigaflow compute "<SQL>"           Batch-compute AIF for traces matching a SQL query
+  gigaflow supplement [SESSION_ID]   Enrich Claude Code spans with local JSONL content
+  gigaflow inspect <trace_id>        Visualize a single trace (opens AIF viewer)
   gigaflow projects                  List all projects
   gigaflow config show               Show saved configuration
   gigaflow config clear              Clear saved configuration
@@ -19,25 +22,37 @@ import sys
 
 from gigaflow import _config
 from gigaflow._setup import load_env_file
-from gigaflow.commands import config, inspect, projects, run, setup, traces
+from gigaflow.commands import (
+    compute,
+    config,
+    inspect,
+    projects,
+    query,
+    setup,
+    supplement,
+    traces,
+    ui,
+)
 
 
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="gigaflow",
-        description="GigaFlow CLI — connect Arize Phoenix traces to GigaFlow and analyze them.",
+        description="GigaFlow CLI — ingest Arize Phoenix traces and compute AIF analysis.",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 examples:
-  gigaflow run aif
-  gigaflow run aif <trace_id>
   gigaflow setup
+  gigaflow sync
   gigaflow traces
   gigaflow spans <trace_id>
+  gigaflow query "SELECT trace_id, trace_name, groundedness FROM trace_metrics"
+  gigaflow query --examples
+  gigaflow compute "SELECT trace_id FROM trace_metrics WHERE run_id IS NULL"
+  gigaflow compute "SELECT trace_id FROM trace_metrics WHERE env = 'prod'" --force
+  gigaflow ui
   gigaflow inspect <trace_id>
   gigaflow inspect <trace_id> --cli
-  gigaflow inspect <trace_id> --port 8080
-  gigaflow sync
   gigaflow config show
   gigaflow config clear
         """,
@@ -56,12 +71,15 @@ examples:
     )
 
     sub = parser.add_subparsers(dest="command", metavar="<command>")
-    run.register(sub)
     setup.register(sub)
     traces.register(sub)
     inspect.register(sub)
+    ui.register(sub)
     projects.register(sub)
     config.register(sub)
+    query.register(sub)
+    compute.register(sub)
+    supplement.register(sub)
 
     return parser
 

@@ -40,4 +40,8 @@ def _handle_sync(args, base_url: str) -> None:
     result = do_sync(base_url, config["datasource_id"])
     if result is None:
         sys.exit(1)
+    ui_url = base_url.replace("/api/v1", "").rstrip("/") + "/"
+    _fmt.info(f"Dashboard: {ui_url}")
+    print("  Open the dashboard to browse traces and run AIF analysis.")
+    print("  Or run:  gigaflow ui")
     print()

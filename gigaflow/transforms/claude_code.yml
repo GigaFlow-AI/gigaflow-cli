@@ -1,0 +1,141 @@
+# Gigaflow built-in transform config for Claude Code OTLP exports.
+#
+# Claude Code emits OpenTelemetry natively when the user sets:
+#   CLAUDE_CODE_ENABLE_TELEMETRY=1
+#   OTEL_LOGS_EXPORTER=otlp                 # events (user_prompt, tool_result, ...)
+#   OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:8000
+#   OTEL_EXPORTER_OTLP_PROTOCOL=http/json   # REQUIRED — gigaflow's OTLP receiver
+#                                             is HTTP/JSON only (no protobuf)
+#   OTEL_LOG_USER_PROMPTS=1                 # unredacted user prompt events
+#   OTEL_LOG_TOOL_DETAILS=1                 # tool_input up to ~4 KB
+#
+# Use this by selecting "claude_code" during `gigaflow setup`.  The OTLP
+# receivers at POST /v1/traces and POST /v1/logs both read the project's
+# transform config — this YAML drives the logs receiver, which is where
+# the semantic content (user prompts, tool calls) actually arrives.
+#
+# Where the data actually lives
+# -----------------------------
+# Claude Code's OTEL export is bifurcated:
+#
+#   * /v1/traces — span timing + token counts only.  No user prompt
+#                  text, no tool name, no tool input, no `prompt.id`.
+#                  These spans (`claude_code.llm_request`,
+#                  `claude_code.tool.execution`, `claude_code.interaction`)
+#                  are useful as latency sidecars but carry no semantics
+#                  the AIF scorer can attribute against.
+#
+#   * /v1/logs   — every semantic field AIF needs.  Four event types:
+#                  `user_prompt`, `api_request`, `tool_decision`,
+#                  `tool_result`.  All carry `session.id` + `prompt.id`
+#                  attributes so we can stitch a Trace per user turn.
+#
+# Each rule below uses `source: log_event` so the log dispatch path in
+# `app.ingest.transformer.classify_log_record` picks it up.  The trace
+# dispatch path skips these rules entirely — log_event rules don't bind
+# to OTLP spans.
+#
+# Why we read prompt_id / session_id from top-level surrogates
+# ------------------------------------------------------------
+# The `user_prompt` event ships *both* a scalar `prompt` (the prompt text)
+# and a sibling `prompt.id` attribute.  Under the OTLP adapter's
+# dotted-key expansion (`_expand_dotted_attrs`), the scalar wins and
+# `attributes.prompt` ends up as the prompt string — so a literal
+# `attributes.prompt.id` path would try to traverse into a string and
+# fail.  The logs adapter pre-extracts the join keys to top-level
+# `source_session_id` / `source_prompt_id` / `source_event_sequence`
+# fields specifically so this YAML can read them without colliding.
+# Those top-level fields are the canonical source for prompt_id / session_id.
+#
+# Redaction note
+# --------------
+# Even with every OTEL flag set, Claude Code redacts assistant response
+# text and thinking blocks unconditionally.  The supplementer fills in
+# `completion` and `tool_output` from the local session JSONL post-ingest.
+# That is why `llm_call` and `tool_invocation` below have no working
+# content-key mapping: the schema validator skips the content-key
+# requirement when `filter.source == "log_event"` precisely so we don't
+# have to map a placeholder path that always returns None.
+
+version: "2"
+source: "claude_code"
+
+primitives:
+
+  # ─────────────────────────────────────────────────────────────────────
+  # user_input — emitted at the start of every user turn.
+  # OTEL event.name: "user_prompt"
+  # ─────────────────────────────────────────────────────────────────────
+  user_input:
+    filter:
+      source: "log_event"
+      field: "event_name"
+      value: "user_prompt"
+      mode: "exact"
+    mapping:
+      content:    "attributes.prompt"
+      message:    "attributes.prompt"
+      session_id: "source_session_id"
+      prompt_id:  "source_prompt_id"
+      user_id:    "attributes.user.id"
+      org_id:     "attributes.organization.id"
+
+  # ─────────────────────────────────────────────────────────────────────
+  # llm_call — one per Claude API request.
+  # OTEL event.name: "api_request"
+  # ─────────────────────────────────────────────────────────────────────
+  llm_call:
+    filter:
+      source: "log_event"
+      field: "event_name"
+      value: "api_request"
+      mode: "exact"
+    mapping:
+      model:                 "attributes.model"
+      latency_ms:            "attributes.duration_ms"
+      prompt_tokens:         "attributes.input_tokens"
+      completion_tokens:     "attributes.output_tokens"
+      cache_read_tokens:     "attributes.cache_read_tokens"
+      cache_creation_tokens: "attributes.cache_creation_tokens"
+      cost_usd:              "attributes.cost_usd"
+      speed:                 "attributes.speed"
+      stop_reason:           "attributes.stop_reason"
+      session_id:            "source_session_id"
+      prompt_id:             "source_prompt_id"
+      # `completion` is intentionally absent — Claude Code redacts the
+      # assistant body in OTEL output.  The supplementer overlays the
+      # un-redacted text from the local session JSONL post-ingest.  The
+      # schema validator skips the content-key requirement when the
+      # filter source is "log_event" (see schema.py).
+
+  # ─────────────────────────────────────────────────────────────────────
+  # tool_invocation — one per tool execution (Bash, Read, Edit, ...)
+  # OTEL event.name: "tool_result"
+  #
+  # `tool_input` is capped (~4 KB) and `tool_output` is NOT in the OTEL
+  # log event at all — only `tool_result_size_bytes`.  The supplementer
+  # overlays both from the un-capped JSONL file.
+  # ─────────────────────────────────────────────────────────────────────
+  tool_invocation:
+    filter:
+      source: "log_event"
+      field: "event_name"
+      value: "tool_result"
+      mode: "exact"
+    mapping:
+      tool_name:         "attributes.tool_name"
+      tool_input:        "attributes.tool_input"
+      tool_parameters:   "attributes.tool_parameters"
+      success:           "attributes.success"
+      duration_ms:       "attributes.duration_ms"
+      result_size_bytes: "attributes.tool_result_size_bytes"
+      decision_type:     "attributes.decision_type"
+      decision_source:   "attributes.decision_source"
+      session_id:        "source_session_id"
+      prompt_id:         "source_prompt_id"
+
+  # tool_decision events are intentionally NOT mapped — they are
+  # permission classifiers, not primitives.  The OTLP logs receiver
+  # drops them on the floor with a log.info().  If we ever decide to
+  # surface them in the AIF graph, add a `transform` primitive rule
+  # sourced from log events here.

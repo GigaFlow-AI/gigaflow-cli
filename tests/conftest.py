@@ -22,9 +22,13 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 
 import pytest
-
-from _constants import CLI_DIR, GIGAFLOW, MOCK_DATASOURCE_ID, MOCK_PROJECT_ID, MOCK_SPAN_ID, MOCK_TRACE_ID
-
+from _constants import (
+    CLI_DIR,
+    MOCK_DATASOURCE_ID,
+    MOCK_PROJECT_ID,
+    MOCK_SPAN_ID,
+    MOCK_TRACE_ID,
+)
 
 # ── package installation ──────────────────────────────────────────────────────
 
@@ -45,6 +49,9 @@ class _MockAPIHandler(BaseHTTPRequestHandler):
 
     # Class-level store so tests can inspect what the server received.
     last_aif_body: dict = {}
+    last_supplement_body: bytes = b""
+    last_supplement_headers: dict = {}
+    last_supplement_query: str = ""
 
     def log_message(self, *args):  # silence request logs during tests
         pass
@@ -149,6 +156,59 @@ class _MockAPIHandler(BaseHTTPRequestHandler):
 
         elif p == f"/api/v1/datasources/{MOCK_DATASOURCE_ID}/sync":
             self._ok({"synced_traces": 2, "synced_spans": 14})
+
+        elif p == "/api/v1/query/":
+            try:
+                body = json.loads(raw) if raw else {}
+                sql = body.get("sql", "").lower()
+            except Exception:
+                sql = ""
+            # Compute command: first pass selects trace_ids; second pass checks run_id IS NOT NULL
+            if "trace_id" in sql and "run_id is not null" in sql:
+                # Skip check — return empty (no already-computed traces by default)
+                self._ok({"columns": ["trace_id"], "rows": [], "row_count": 0, "truncated": False})
+            elif "trace_id" in sql:
+                # Return trace_id column so compute can proceed
+                self._ok({
+                    "columns": ["trace_id"],
+                    "rows": [[MOCK_TRACE_ID]],
+                    "row_count": 1,
+                    "truncated": False,
+                })
+            else:
+                # Regular query — return named columns for query tests
+                self._ok({
+                    "columns": ["trace_name", "groundedness", "tool_consumption"],
+                    "rows": [
+                        ["benchmark-good-1", 0.91, 0.88],
+                        ["benchmark-bad-1",  0.12, 0.08],
+                    ],
+                    "row_count": 2,
+                    "truncated": False,
+                })
+
+        elif p == "/api/v1/supplement/claude_code":
+            _MockAPIHandler.last_supplement_body = raw
+            _MockAPIHandler.last_supplement_headers = dict(self.headers.items())
+            _MockAPIHandler.last_supplement_query = self.path.split("?", 1)[1] if "?" in self.path else ""
+            self._ok({
+                "session_id":            "test-session",
+                "session_file_path":     "/tmp/fake.jsonl",
+                "spans_matched":         5,
+                "spans_updated":         4,
+                "spans_not_matched":     0,
+                "jsonl_rows_unused":     0,
+                "subagents_synthesized": 0,
+                "bytes_ingested":        1234,
+                "assistant_text_chars":  500,
+                "thinking_chars":        42,
+                "tool_output_chars":     128,
+                "unmatched_prompts":     [],
+                "orphan_spans":          [],
+                "warnings":              [],
+                "errors":                [],
+                "dry_run":               "dry_run=true" in (self.path or ""),
+            })
 
         elif p == f"/api/v1/aif/{MOCK_TRACE_ID}":
             try:

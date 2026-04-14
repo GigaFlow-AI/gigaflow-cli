@@ -1,7 +1,6 @@
 """config command (show / clear)."""
 
 import json
-import sys
 
 from gigaflow import _config, _fmt
 

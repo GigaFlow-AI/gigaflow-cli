@@ -1,7 +1,6 @@
 """Interactive setup wizard: project creation, transform upload, datasource registration, sync."""
 
 import importlib.resources
-import sys
 
 from gigaflow import _config, _fmt
 from gigaflow._http import api
