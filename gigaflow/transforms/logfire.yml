@@ -6,7 +6,7 @@
 #
 # Span classification uses span_name prefix matching (mode: prefix)
 # because pydantic-ai emits consistent span name prefixes:
-#   "model request" → llm_call
+#   "chat"          → llm_call (span_name is "chat <model>", e.g. "chat gpt-4o")
 #   "running tool"  → tool_invocation
 #   "agent run"     → user_input (root span carries the user's query)
 #
@@ -25,29 +25,41 @@ source: "logfire"
 primitives:
 
   # -------------------------------------------------------------------------
-  # user_input — the root agent span carries the user's original query.
-  # pydantic-ai's "agent run" span is the top-level span for each invocation.
-  # Its system_instructions hold the agent's persona; user_prompt is the query.
+  # user_input — the root agent span carries the user's original query,
+  # plus any subsequent per-turn user spans.
+  #
+  # Two span-name conventions land here:
+  #   "agent run"  — pydantic-ai's root span for an invocation (first turn).
+  #   "user turn"  — multi-turn user inputs beyond the first: * emitted by harnesses with a user simulator (e.g.
+  #                      benchmarks/tau_bench) per simulator reply, and
+  #                    * synthesised by the Logfire reader from
+  #                      ``pydantic_ai.all_messages`` when a single
+  #                      ``agent run`` contains multiple user-role messages.
+  #
+  # Both carry the user text under ``pydantic_ai.user_prompt`` so the
+  # mapping below works for either source.
   # -------------------------------------------------------------------------
   user_input:
     filter:
       field: "span_name"
-      value: "agent run"
+      value:
+        - "agent run"
+        - "user turn"
       mode: "exact"
     mapping:
       content:  "attributes.pydantic_ai.user_prompt"
       message:  "attributes.pydantic_ai.user_prompt"
 
   # -------------------------------------------------------------------------
-  # llm_call — every "model request" span is an LLM completion.
-  # pydantic-ai emits one per model call with full GenAI semantic attributes.
-  # The span_name may include the model name (e.g. "model request (gpt-4o)"),
-  # so prefix matching captures all variants cleanly.
+  # llm_call — every "chat <model>" span is an LLM completion.
+  # pydantic-ai emits one per model call with span_name "chat <model_name>"
+  # (e.g. "chat gpt-4o", "chat fake-gpt-4o-mini") plus full GenAI semantic
+  # attributes. Prefix matching on "chat" captures all model variants cleanly.
   # -------------------------------------------------------------------------
   llm_call:
     filter:
       field: "span_name"
-      value: "model request"
+      value: "chat"
       mode: "prefix"
     mapping:
       model:             "attributes.gen_ai.request.model"
