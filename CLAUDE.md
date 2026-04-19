@@ -5,11 +5,43 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## Commands
 
 ```bash
-cd cli
 pip install -e .          # install CLI locally for development
 uv run pytest             # run CLI tests
 uv run ruff check .       # lint
 ```
+
+## Local development cycle
+
+The CLI is published as its own package (`gigaflow`) and used against a
+running gigaflow backend. When a backend change (new endpoint, new field,
+etc.) requires a matching CLI change, the loop looks like:
+
+```bash
+# One-time: editable install from the checkout
+cd /path/to/gigaflow-cli
+pip install -e .
+
+# Point at a local backend via the normal setup flow
+gigaflow setup                                 # enter http://localhost:8000 when prompted
+
+# Iterate: edit source, rerun the command — no reinstall needed
+$EDITOR gigaflow/commands/sync.py
+gigaflow sync                                  # picks up your edits immediately
+gigaflow query "select * from trace_metrics limit 5"
+```
+
+`pip install -e .` installs the `gigaflow` console script to your active
+environment (venv / uv / system) with the source directory linked in, so
+every edit is live on the next invocation. No rebuild, no reinstall.
+
+**Coordinated change across repos:** when a single feature spans backend
+and CLI, branch both repos, run the backend locally (`docker compose up`
+in `gigaflow/`), and run the editable CLI against it. Merge the backend
+PR first, then the CLI PR — the CLI is a thin HTTP client and defaults
+to failing gracefully on missing endpoints.
+
+**Publishing a release:** bump `version` in `pyproject.toml`, tag, and
+push — `.github/workflows/publish.yml` handles the PyPI upload.
 
 ## Architecture
 
