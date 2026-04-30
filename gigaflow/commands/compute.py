@@ -61,6 +61,25 @@ def register(sub) -> None:
         help="Relevance threshold for @K metrics, 0.0–1.0 (default: 0.3)",
     )
     p.add_argument(
+        "--attribution-mode",
+        choices=["llm", "embedding"],
+        default=None,
+        help="Attribution backend: 'llm' (default) or 'embedding'. Omit to use the backend's configured default.",
+    )
+    p.add_argument(
+        "--embedding-threshold",
+        type=float,
+        default=None,
+        metavar="T",
+        help="Cosine-similarity cutoff for embedding-mode attribution (forwarded as embedding_config.threshold).",
+    )
+    p.add_argument(
+        "--embedding-model",
+        default=None,
+        metavar="MODEL",
+        help="Embedding model for embedding-mode attribution (forwarded as embedding_config.model).",
+    )
+    p.add_argument(
         "--cost-breakdown",
         action="store_true",
         help="After each run, print a per-stage cost table (model, tokens, requests, USD)",
@@ -128,6 +147,15 @@ def _handle_compute(args, base_url: str) -> None:
         body["model"] = args.model
     if args.k_threshold is not None:
         body["k_threshold"] = args.k_threshold
+    if args.attribution_mode:
+        body["attribution_mode"] = args.attribution_mode
+    embedding_config: dict = {}
+    if args.embedding_threshold is not None:
+        embedding_config["threshold"] = args.embedding_threshold
+    if args.embedding_model:
+        embedding_config["model"] = args.embedding_model
+    if embedding_config:
+        body["embedding_config"] = embedding_config
 
     # ── 4. Run in parallel ───────────────────────────────────────────────────
     success = 0

@@ -328,6 +328,84 @@ class TestCompute:
         assert _MockAPIHandler.last_aif_body.get("model") == "gpt-4o"
         assert _MockAPIHandler.last_aif_body.get("k_threshold") == 0.5
 
+    def test_compute_default_omits_attribution_mode(self, installed_cli, mock_server, configured_env_with_key):
+        """Without --attribution-mode the body must not carry the field — backend falls back to settings."""
+        _MockAPIHandler.last_aif_body = {}
+        result = run(
+            ["--backend", mock_server, "compute",
+             "SELECT trace_id FROM trace_metrics"],
+            configured_env_with_key,
+        )
+        assert result.returncode == 0, err(result)
+        assert "attribution_mode" not in _MockAPIHandler.last_aif_body
+        assert "embedding_config" not in _MockAPIHandler.last_aif_body
+
+    def test_compute_forwards_attribution_mode_embedding(self, installed_cli, mock_server, configured_env_with_key):
+        """--attribution-mode embedding lands in the AIF POST body."""
+        _MockAPIHandler.last_aif_body = {}
+        result = run(
+            ["--backend", mock_server, "compute",
+             "SELECT trace_id FROM trace_metrics",
+             "--attribution-mode", "embedding"],
+            configured_env_with_key,
+        )
+        assert result.returncode == 0, err(result)
+        assert _MockAPIHandler.last_aif_body.get("attribution_mode") == "embedding"
+
+    def test_compute_forwards_attribution_mode_llm(self, installed_cli, mock_server, configured_env_with_key):
+        """--attribution-mode llm round-trips even though it's the backend default."""
+        _MockAPIHandler.last_aif_body = {}
+        result = run(
+            ["--backend", mock_server, "compute",
+             "SELECT trace_id FROM trace_metrics",
+             "--attribution-mode", "llm"],
+            configured_env_with_key,
+        )
+        assert result.returncode == 0, err(result)
+        assert _MockAPIHandler.last_aif_body.get("attribution_mode") == "llm"
+
+    def test_compute_rejects_unknown_attribution_mode(self, installed_cli, mock_server, configured_env_with_key):
+        """argparse must reject modes outside the {llm, embedding} choice set."""
+        result = run(
+            ["--backend", mock_server, "compute",
+             "SELECT trace_id FROM trace_metrics",
+             "--attribution-mode", "bogus"],
+            configured_env_with_key,
+        )
+        assert result.returncode != 0
+        assert b"invalid choice" in result.stderr or b"bogus" in result.stderr
+
+    def test_compute_forwards_embedding_config(self, installed_cli, mock_server, configured_env_with_key):
+        """--embedding-threshold and --embedding-model land under embedding_config."""
+        _MockAPIHandler.last_aif_body = {}
+        result = run(
+            ["--backend", mock_server, "compute",
+             "SELECT trace_id FROM trace_metrics",
+             "--attribution-mode", "embedding",
+             "--embedding-threshold", "0.42",
+             "--embedding-model", "text-embedding-3-large"],
+            configured_env_with_key,
+        )
+        assert result.returncode == 0, err(result)
+        body = _MockAPIHandler.last_aif_body
+        assert body.get("attribution_mode") == "embedding"
+        assert body.get("embedding_config") == {
+            "threshold": 0.42,
+            "model": "text-embedding-3-large",
+        }
+
+    def test_compute_embedding_config_omitted_when_no_subflags(self, installed_cli, mock_server, configured_env_with_key):
+        """--attribution-mode embedding without sub-flags must not synthesise an empty embedding_config."""
+        _MockAPIHandler.last_aif_body = {}
+        result = run(
+            ["--backend", mock_server, "compute",
+             "SELECT trace_id FROM trace_metrics",
+             "--attribution-mode", "embedding"],
+            configured_env_with_key,
+        )
+        assert result.returncode == 0, err(result)
+        assert "embedding_config" not in _MockAPIHandler.last_aif_body
+
     def test_compute_backend_down_exits_nonzero(self, installed_cli, configured_env_with_key):
         """Unreachable backend exits non-zero without a traceback."""
         result = run(
