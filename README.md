@@ -57,6 +57,8 @@ After changing the transform config, re-sync to reclassify your spans:
 gigaflow sync
 ```
 
+Advanced: a `transform.yml` may also declare an optional top-level `auth_mappings` block that tags each tool-output atom with a per-atom Beta-distribution trust score, surfaced as the `authoritative_groundedness` trace metric. See [`gigaflow/README.md` → Authoritativeness mappings](gigaflow/README.md#authoritativeness-mappings-auth_mappings) for the full schema, the `when`-expression grammar, and worked examples for retrieval / HTTP / SQL tools.
+
 ### Transform config format
 
 ```yaml
