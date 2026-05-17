@@ -1,5 +1,9 @@
 # CLAUDE.md
 
+## PR Ownership
+
+When explicitly asked to own a PR through merge, keep monitoring review comments and CI. Address all actionable unresolved review threads, push fixes, rerun checks, and merge once CI is green, the branch is mergeable, and there are no unresolved requested changes. Stop and ask for user review before making or merging changes that are broad, risky, security-sensitive, data-destructive, migration-related, or likely to break existing behavior.
+
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
 ## Commands
