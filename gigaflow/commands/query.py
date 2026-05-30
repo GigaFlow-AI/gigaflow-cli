@@ -8,7 +8,7 @@ import json
 import sys
 
 from gigaflow import _fmt
-from gigaflow._http import api
+from gigaflow._http import api, auth_error_hint, unreachable_hint
 
 # ── Schema reference ──────────────────────────────────────────────────────────
 
@@ -192,11 +192,19 @@ def _handle_query(args, base_url: str) -> None:
         )
         sys.exit(1)
 
-    status, resp = api(base_url, "POST", "/query/", body={"sql": sql, "limit": args.limit})
+    status, resp = api(
+        base_url, "POST", "/query/", body={"sql": sql, "limit": args.limit},
+        api_key=getattr(args, "api_key", None),
+    )
 
     if status != 200:
-        detail = resp.get("detail", resp) if isinstance(resp, dict) else resp
-        _fmt.fail(f"Query failed ({status}): {detail}")
+        if status is None:
+            _fmt.fail(unreachable_hint(base_url))
+        elif status in (401, 403):
+            _fmt.fail(auth_error_hint())
+        else:
+            detail = resp.get("detail", resp) if isinstance(resp, dict) else resp
+            _fmt.fail(f"Query failed ({status}): {detail}")
         sys.exit(1)
 
     columns = resp.get("columns", [])

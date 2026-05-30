@@ -130,8 +130,13 @@ def _post_supplement(
     dry_run: bool,
     force: bool,
     project_id: str | None,
+    api_key: str | None = None,
 ) -> tuple[int | None, dict]:
-    """POST a gzip-compressed JSONL body to /api/v1/supplement/claude_code."""
+    """POST a gzip-compressed JSONL body to /api/v1/supplement/claude_code.
+
+    This endpoint uses a raw gzip body (not the JSON helper in _http), so the
+    bearer-token header is added here directly when an api_key is provided.
+    """
     body = gzip.compress(file_path.read_bytes())
     query = [
         f"session_id={urllib.parse.quote(session_id)}",
@@ -146,8 +151,10 @@ def _post_supplement(
     req = urllib.request.Request(url, data=body, method="POST")
     req.add_header("Content-Type", "application/gzip")
     req.add_header("Content-Encoding", "gzip")
+    if api_key:
+        req.add_header("Authorization", f"Bearer {api_key}")
     try:
-        with urllib.request.urlopen(req) as resp:
+        with urllib.request.urlopen(req, timeout=30) as resp:
             return resp.status, json.loads(resp.read())
     except urllib.error.HTTPError as e:
         raw = e.read()
@@ -247,6 +254,7 @@ def _handle_supplement(args, base_url: str) -> None:
             dry_run=args.dry_run,
             force=args.force,
             project_id=args.project_id,
+            api_key=getattr(args, "api_key", None),
         )
         if status != 200:
             detail = (result or {}).get("detail") or (result or {}).get("error") or result

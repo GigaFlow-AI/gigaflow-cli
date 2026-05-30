@@ -3,7 +3,7 @@
 import sys
 
 from gigaflow import _fmt
-from gigaflow._http import api
+from gigaflow._http import api, auth_error_hint, unreachable_hint
 
 
 def register(sub) -> None:
@@ -11,12 +11,21 @@ def register(sub) -> None:
     sub.add_parser("datasources", help="List all datasources").set_defaults(func=_handle_datasources)
 
 
+def _fail(status, resp, base_url: str, what: str) -> None:
+    if status is None:
+        _fmt.fail(unreachable_hint(base_url))
+    elif status in (401, 403):
+        _fmt.fail(auth_error_hint())
+    else:
+        _fmt.fail(f"Failed to list {what} ({status}): {resp}")
+    sys.exit(1)
+
+
 def _handle_projects(args, base_url: str) -> None:
     _fmt.section("Projects")
-    status, resp = api(base_url, "GET", "/projects/")
+    status, resp = api(base_url, "GET", "/projects/", api_key=getattr(args, "api_key", None))
     if status != 200:
-        _fmt.fail(f"Failed to list projects: {resp}")
-        sys.exit(1)
+        _fail(status, resp, base_url, "projects")
 
     projects = resp.get("projects", [])
     rows = [
@@ -29,10 +38,9 @@ def _handle_projects(args, base_url: str) -> None:
 
 def _handle_datasources(args, base_url: str) -> None:
     _fmt.section("Datasources")
-    status, resp = api(base_url, "GET", "/datasources/")
+    status, resp = api(base_url, "GET", "/datasources/", api_key=getattr(args, "api_key", None))
     if status != 200:
-        _fmt.fail(f"Failed to list datasources: {resp}")
-        sys.exit(1)
+        _fail(status, resp, base_url, "datasources")
 
     datasources = resp.get("datasources", [])
     rows = [

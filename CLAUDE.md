@@ -51,7 +51,16 @@ push — `.github/workflows/publish.yml` handles the PyPI upload.
 
 The CLI has **zero external dependencies** — stdlib only (`urllib`, `argparse`, `json`, `pathlib`, `concurrent.futures`). All HTTP calls to the backend use `urllib` directly.
 
-**Config** is persisted in `~/.gigaflow/config.json` (backend URL, project ID, API key). `gigaflow.env` in the working directory is auto-loaded at startup via `set -a && source gigaflow.env`.
+**Config** is persisted in `~/.gigaflow/config.json` with keys `backend_url`, `project_id`, `datasource_id`, and `api_key` (the GigaFlow backend auth token). `_config.py` exposes `load/save/clear` plus `get(key, default)` / `set(key, value)` (the latter preserves the other keys). `gigaflow.env` in the working directory is auto-loaded at startup via `set -a && source gigaflow.env`.
+
+**Backend URL & API key resolution** — both are resolved once in `cli.py`'s `main()` and threaded to handlers as `base_url` / `args.api_key`:
+
+- **Backend URL**: `--backend <url>` > `$GIGAFLOW_BACKEND_URL` > config `backend_url` > `http://localhost:8000/api/v1`.
+- **API key**: `--api-key <key>` > `$GIGAFLOW_API_KEY` > config `api_key` > `None`.
+
+**Auth forwarding** — when an API key is resolved, `_http.api()` attaches it as `Authorization: Bearer <key>` on every request (harmless on unauthenticated endpoints; required by the backend's AIF compute endpoint when `GIGAFLOW_DEV_MODE=false`). `_http.api()` also applies a 30 s timeout and retries idempotent GET/HEAD/OPTIONS and connection errors up to three times with exponential backoff; HTTP error responses (4xx/5xx) are never retried so auth failures fail fast. The `(status, payload)` contract returns `status is None` on a connection-level failure (vs. the real HTTP code on an error response). `supplement.py` posts a raw gzip body outside the JSON helper and attaches the bearer header + timeout directly. Friendly hints live in `_http.auth_error_hint()` and `_http.unreachable_hint(base_url)`.
+
+> **OpenAI key vs. GigaFlow key.** `compute.py` *additionally* sends the user's `OPENAI_API_KEY` in the request **body** (as `{"api_key": ...}`, a confusingly-named field that is the OpenAI key) for the backend's LLM calls. This is separate from the GigaFlow bearer token — do not conflate or remove either.
 
 **Transform config resolution** — `gigaflow setup` prompts for a `transform.yml` path. If left blank, the built-in `gigaflow/transforms/arize_phoenix.yml` (bundled as package data) is used.
 
