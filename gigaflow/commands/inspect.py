@@ -11,7 +11,17 @@ import sys
 import webbrowser
 
 from gigaflow import _fmt
-from gigaflow._http import api
+from gigaflow._http import api, auth_error_hint, unreachable_hint
+
+
+def _fail(status, resp, base_url: str, what: str) -> None:
+    if status is None:
+        _fmt.fail(unreachable_hint(base_url))
+    elif status in (401, 403):
+        _fmt.fail(auth_error_hint())
+    else:
+        _fmt.fail(f"Failed to {what} ({status}): {resp}")
+    sys.exit(1)
 
 
 def register(sub) -> None:
@@ -31,15 +41,13 @@ def _handle_inspect(args, base_url: str) -> None:
     _fmt.header("GigaFlow Trace Inspector")
 
     _fmt.section(f"Fetching trace {args.trace_id[:8]}…")
-    status, trace = api(base_url, "GET", f"/traces/{args.trace_id}")
+    status, trace = api(base_url, "GET", f"/traces/{args.trace_id}", api_key=getattr(args, "api_key", None))
     if status != 200:
-        _fmt.fail(f"Failed to fetch trace ({status}): {trace}")
-        sys.exit(1)
+        _fail(status, trace, base_url, "fetch trace")
 
-    status, spans_resp = api(base_url, "GET", f"/traces/{args.trace_id}/spans")
+    status, spans_resp = api(base_url, "GET", f"/traces/{args.trace_id}/spans", api_key=getattr(args, "api_key", None))
     if status != 200:
-        _fmt.fail(f"Failed to fetch spans ({status}): {spans_resp}")
-        sys.exit(1)
+        _fail(status, spans_resp, base_url, "fetch spans")
 
     spans = spans_resp if isinstance(spans_resp, list) else spans_resp.get("spans", [])
     _fmt.ok(f"Loaded {len(spans)} span(s)")

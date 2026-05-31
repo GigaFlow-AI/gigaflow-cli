@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "gigaflow"
-version = "0.1.0"
+version = "0.2.0"
 description = "GigaFlow CLI — connect Arize Phoenix traces to GigaFlow and analyze them"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -38,8 +38,8 @@ dev = [
 gigaflow = "gigaflow.cli:main"
 
 [project.urls]
-Homepage = "https://github.com/GigaFlow-AI/gigaflow"
-Repository = "https://github.com/GigaFlow-AI/gigaflow"
+Homepage = "https://github.com/GigaFlow-AI/gigaflow-cli"
+Repository = "https://github.com/GigaFlow-AI/gigaflow-cli"
 
 [tool.setuptools.packages.find]
 where = ["."]

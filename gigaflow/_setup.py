@@ -40,11 +40,23 @@ def load_env_file(path: str) -> dict:
 ARIZE_TRANSFORM_YAML = _load_default_transform()
 
 
-def check_backend(base_url: str) -> bool:
-    status, resp = api(base_url, "GET", "/health")
+def _resolve_key(api_key: str | None) -> str | None:
+    """Fall back to the saved config key when a caller doesn't pass one.
+
+    Lets the plain ``do_sync(base_url, ds_id)`` call sites in setup/traces pick
+    up a configured key without every caller having to thread it through.
+    """
+    return api_key if api_key is not None else _config.get("api_key")
+
+
+def check_backend(base_url: str, api_key: str | None = None) -> bool:
+    status, resp = api(base_url, "GET", "/health", api_key=_resolve_key(api_key))
     if status is None:
         _fmt.fail(f"Could not reach gigaflow backend at {base_url}")
-        _fmt.info("Make sure the backend is running:  cd backend && make run")
+        _fmt.info("Check the URL ($GIGAFLOW_BACKEND_URL / --backend) and that the backend is running.")
+        return False
+    if status in (401, 403):
+        _fmt.fail("Authentication failed — set a gigaflow API key (--api-key / $GIGAFLOW_API_KEY).")
         return False
     if status != 200:
         _fmt.fail(f"Backend returned {status}: {resp}")
@@ -53,8 +65,8 @@ def check_backend(base_url: str) -> bool:
     return True
 
 
-def create_project(base_url: str, name: str) -> str | None:
-    status, resp = api(base_url, "POST", "/projects/", {"name": name})
+def create_project(base_url: str, name: str, api_key: str | None = None) -> str | None:
+    status, resp = api(base_url, "POST", "/projects/", {"name": name}, api_key=_resolve_key(api_key))
     if status != 200:
         _fmt.fail(f"Failed to create project ({status}): {resp}")
         return None
@@ -64,10 +76,10 @@ def create_project(base_url: str, name: str) -> str | None:
     return project_id
 
 
-def upload_transform(base_url: str, project_id: str, yaml_content: str = ARIZE_TRANSFORM_YAML) -> bool:
+def upload_transform(base_url: str, project_id: str, yaml_content: str = ARIZE_TRANSFORM_YAML, api_key: str | None = None) -> bool:
     status, resp = api(
         base_url, "PUT", f"/projects/{project_id}/transform",
-        yaml_content, content_type="text/plain",
+        yaml_content, content_type="text/plain", api_key=_resolve_key(api_key),
     )
     if status != 200:
         _fmt.fail(f"Failed to upload transform config ({status}): {resp}")
@@ -78,13 +90,13 @@ def upload_transform(base_url: str, project_id: str, yaml_content: str = ARIZE_T
     return True
 
 
-def register_datasource(base_url: str, project_id: str, connection_url: str, source_table: str) -> str | None:
+def register_datasource(base_url: str, project_id: str, connection_url: str, source_table: str, api_key: str | None = None) -> str | None:
     status, resp = api(base_url, "POST", "/datasources/", {
         "project_id": project_id,
         "name": "arize-phoenix",
         "connection_url": connection_url,
         "source_table": source_table,
-    })
+    }, api_key=_resolve_key(api_key))
     if status != 200:
         _fmt.fail(f"Failed to register datasource ({status}): {resp}")
         return None
@@ -94,8 +106,8 @@ def register_datasource(base_url: str, project_id: str, connection_url: str, sou
     return datasource_id
 
 
-def do_sync(base_url: str, datasource_id: str) -> tuple[int, int] | None:
-    status, resp = api(base_url, "POST", f"/datasources/{datasource_id}/sync")
+def do_sync(base_url: str, datasource_id: str, api_key: str | None = None) -> tuple[int, int] | None:
+    status, resp = api(base_url, "POST", f"/datasources/{datasource_id}/sync", api_key=_resolve_key(api_key))
     if status != 200:
         _fmt.fail(f"Sync failed ({status}): {resp.get('detail', resp)}")
         detail = str(resp.get("detail", ""))
@@ -112,6 +124,10 @@ def do_sync(base_url: str, datasource_id: str) -> tuple[int, int] | None:
 def run_wizard(base_url: str) -> dict | None:
     """
     Interactive wizard. Returns saved config dict on success, None on failure.
+
+    ``base_url`` is the already-resolved default (--backend / $GIGAFLOW_BACKEND_URL
+    / saved config / localhost); the wizard offers it as the default and lets the
+    user override it, then persists the chosen URL and optional API key.
     """
     _fmt.header("GigaFlow Setup Wizard")
 
@@ -124,15 +140,27 @@ def run_wizard(base_url: str) -> dict | None:
     else:
         env = {}
 
-    # ── Step 1: backend ───────────────────────────────────────────────────────
+    # ── Step 1: backend URL + API key ─────────────────────────────────────────
     _fmt.section("Step 1: GigaFlow backend")
-    if not check_backend(base_url):
+    base_url = _fmt.prompt(
+        "Backend base URL", env.get("GIGAFLOW_BACKEND_URL", base_url)
+    ).rstrip("/")
+
+    # Optional gigaflow API key (forwarded as Authorization: Bearer <key>).
+    # Required by a hosted backend running with GIGAFLOW_DEV_MODE=false; leave
+    # blank for a local dev backend.
+    default_key = env.get("GIGAFLOW_API_KEY", _config.get("api_key", "") or "")
+    api_key = _fmt.prompt(
+        "GigaFlow API key (blank for none / local dev mode)", default_key
+    ) or None
+
+    if not check_backend(base_url, api_key):
         return None
 
     # ── Step 2: project ───────────────────────────────────────────────────────
     _fmt.section("Step 2: Project")
     project_name = _fmt.prompt("Project name", env.get("GIGAFLOW_PROJECT_NAME", "arize-phoenix-project"))
-    project_id = create_project(base_url, project_name)
+    project_id = create_project(base_url, project_name, api_key)
     if not project_id:
         return None
 
@@ -152,7 +180,7 @@ def run_wizard(base_url: str) -> dict | None:
         yaml_content = ARIZE_TRANSFORM_YAML
         _fmt.info("Using built-in Arize Phoenix transform config")
 
-    if not upload_transform(base_url, project_id, yaml_content):
+    if not upload_transform(base_url, project_id, yaml_content, api_key):
         return None
 
     # ── Step 3: Arize Phoenix DB ──────────────────────────────────────────────
@@ -185,37 +213,39 @@ def run_wizard(base_url: str) -> dict | None:
 
     # ── Step 4: register + sync ───────────────────────────────────────────────
     _fmt.section("Step 4: Register datasource & sync")
-    datasource_id = register_datasource(base_url, project_id, connection_url, table)
+    datasource_id = register_datasource(base_url, project_id, connection_url, table, api_key)
     if not datasource_id:
         return None
 
-    result = do_sync(base_url, datasource_id)
+    result = do_sync(base_url, datasource_id, api_key)
     if result is None:
         return None
 
     synced_traces, _ = result
     if synced_traces > 0:
-        _show_span_preview(base_url, project_id)
+        _show_span_preview(base_url, project_id, api_key)
 
     config: dict = {
         "backend_url": base_url,
         "project_id": project_id,
         "datasource_id": datasource_id,
     }
+    if api_key:
+        config["api_key"] = api_key
     _config.save(config)
     _fmt.ok(f"Configuration saved to {_config.CONFIG_PATH}")
     return config
 
 
-def _show_span_preview(base_url: str, project_id: str):
-    status, resp = api(base_url, "GET", f"/traces/?project_id={project_id}")
+def _show_span_preview(base_url: str, project_id: str, api_key: str | None = None):
+    status, resp = api(base_url, "GET", f"/traces/?project_id={project_id}", api_key=_resolve_key(api_key))
     if status != 200:
         return
     traces = resp.get("traces", [])
     if not traces:
         return
     trace_id = traces[0]["trace_id"]
-    status, resp = api(base_url, "GET", f"/traces/{trace_id}/spans")
+    status, resp = api(base_url, "GET", f"/traces/{trace_id}/spans", api_key=_resolve_key(api_key))
     if status != 200:
         return
     spans = resp if isinstance(resp, list) else resp.get("spans", [])

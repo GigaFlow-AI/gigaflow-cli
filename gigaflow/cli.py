@@ -61,7 +61,19 @@ examples:
         "--backend",
         metavar="URL",
         default=None,
-        help="GigaFlow API base URL (default: from config or http://localhost:8000/api/v1)",
+        help=(
+            "GigaFlow API base URL. Overrides $GIGAFLOW_BACKEND_URL and the saved "
+            "config (default: http://localhost:8000/api/v1)"
+        ),
+    )
+    parser.add_argument(
+        "--api-key",
+        metavar="KEY",
+        default=None,
+        help=(
+            "GigaFlow API key, sent as 'Authorization: Bearer <key>'. "
+            "Overrides $GIGAFLOW_API_KEY and the saved config."
+        ),
     )
     parser.add_argument(
         "--env-file",
@@ -99,7 +111,29 @@ def main():
             os.environ.setdefault(key, value)
 
     cfg = _config.load()
-    base_url = (args.backend or cfg.get("backend_url") or "http://localhost:8000/api/v1").rstrip("/")
+    # Backend URL resolution order:
+    #   --backend > $GIGAFLOW_BACKEND_URL > cfg backend_url > localhost default
+    base_url = (
+        args.backend
+        or os.environ.get("GIGAFLOW_BACKEND_URL")
+        or cfg.get("backend_url")
+        or "http://localhost:8000/api/v1"
+    ).rstrip("/")
+
+    # API-key resolution order:
+    #   --api-key > $GIGAFLOW_API_KEY > $GIGAFLOW_AIF_API_KEY > cfg api_key > None
+    # GIGAFLOW_AIF_API_KEY is the historical name documented in the backend
+    # (backend/CLAUDE.md). GIGAFLOW_API_KEY is the preferred general name now
+    # that the whole API surface — not just AIF compute — is token-gated. Both
+    # forward the same value as `Authorization: Bearer <key>`.
+    # Stashed back onto args so each handler can forward it to _http.api().
+    args.api_key = (
+        args.api_key
+        or os.environ.get("GIGAFLOW_API_KEY")
+        or os.environ.get("GIGAFLOW_AIF_API_KEY")
+        or cfg.get("api_key")
+        or None
+    )
 
     args.func(args, base_url)
 

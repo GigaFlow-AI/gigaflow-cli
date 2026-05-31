@@ -11,21 +11,96 @@ pip install gigaflow
 Or from source:
 
 ```bash
-cd cli && pip install -e .
+git clone https://github.com/GigaFlow-AI/gigaflow-cli
+cd gigaflow-cli && pip install -e .
 ```
 
 ## Usage
 
 ```bash
-gigaflow setup                                           # Connect to Arize Phoenix datasource
+gigaflow setup                                           # First-run wizard: backend, datasource, transform
 gigaflow traces                                          # List traces (auto-syncs first)
 gigaflow spans <trace_id>                                # List spans for a trace
-gigaflow aif run <trace_id>                              # Run AIF analysis
-gigaflow aif run <trace_id> --model gpt-4o --show-atoms
+gigaflow query "SELECT * FROM trace_metrics LIMIT 5"     # Run SQL against the trace_metrics view
+gigaflow compute "SELECT trace_id FROM trace_metrics"    # Batch-compute AIF for matching traces
+gigaflow inspect <trace_id>                              # Open the browser viewer for a trace
 gigaflow sync                                            # Re-sync from datasource
 gigaflow config show                                     # Show saved config
 gigaflow config clear                                    # Reset config
 ```
+
+## Connect to a hosted GigaFlow backend
+
+By default the CLI talks to a backend on `http://localhost:8000`. To point it at
+a hosted GigaFlow backend, set the backend URL and (when the backend requires
+one) an API key. You can supply these three ways — environment variables, flags,
+or by running `gigaflow setup`.
+
+### Quickstart (zero to AIF in minutes)
+
+```bash
+# 1. Install the CLI (stdlib-only, nothing else to pull in)
+pip install gigaflow
+
+# 2. Point at your hosted backend and authenticate
+export GIGAFLOW_BACKEND_URL=https://api.gigaflow.ai/api/v1
+export GIGAFLOW_API_KEY=gf_live_...           # the key from your GigaFlow account
+export OPENAI_API_KEY=sk-...                   # used by `compute` for the AIF LLM calls
+
+# 3. Run the first-run wizard: registers your project, uploads the transform
+#    config, and connects your Arize Phoenix datasource
+gigaflow setup
+
+# 4. Pull traces from your datasource into GigaFlow
+gigaflow sync
+
+# 5. Compute AIF for every trace that doesn't have results yet
+gigaflow compute "SELECT trace_id FROM trace_metrics WHERE run_id IS NULL"
+
+# 6. Open a trace in the browser viewer (spans + AIF tabs)
+gigaflow inspect <trace_id>
+```
+
+That's it — once `setup` has saved your config, the `GIGAFLOW_BACKEND_URL` /
+`GIGAFLOW_API_KEY` exports are optional on later runs (they're persisted to
+`~/.gigaflow/config.json`), though keeping them in your shell profile is fine.
+
+### Configuring the backend URL and API key
+
+Each value resolves in priority order — the first one set wins:
+
+**Backend URL** — `--backend <url>` > `$GIGAFLOW_BACKEND_URL` > saved config
+`backend_url` > `http://localhost:8000/api/v1`.
+
+**API key** — `--api-key <key>` > `$GIGAFLOW_API_KEY` > saved config `api_key` >
+none. When present it is forwarded on every request as
+`Authorization: Bearer <key>`. The AIF compute endpoint (`POST /aif/{trace_id}`)
+requires it whenever the backend runs with `GIGAFLOW_DEV_MODE=false`; a local
+dev backend (`GIGAFLOW_DEV_MODE=true`) accepts requests without a key.
+
+```bash
+# Environment variables (persist across commands in your shell)
+export GIGAFLOW_BACKEND_URL=https://api.gigaflow.ai/api/v1
+export GIGAFLOW_API_KEY=gf_live_...
+gigaflow projects
+
+# Or per-invocation flags (override everything else)
+gigaflow --backend https://api.gigaflow.ai/api/v1 --api-key gf_live_... projects
+```
+
+`gigaflow setup` also prompts for the backend URL (defaulting to the current
+resolved value) and an optional API key, and saves both to
+`~/.gigaflow/config.json` so you don't have to set them again.
+
+> **Two different keys, two different places.** The `GIGAFLOW_API_KEY` above
+> authenticates you to the GigaFlow backend and travels in the
+> `Authorization: Bearer` header. `gigaflow compute` *separately* forwards your
+> `OPENAI_API_KEY` (from the environment) in the request **body**, where the
+> backend uses it to make the AIF LLM calls on your behalf. Set both.
+
+If the backend is unreachable or rejects the key, the CLI prints a short,
+actionable message instead of a traceback. Network requests use a 30 s timeout,
+and idempotent GETs are retried up to three times with exponential backoff.
 
 ## Transform config
 
@@ -95,7 +170,6 @@ Mapping values are dot-notation paths traversed against each span row. Nested JS
 ## Publish to PyPI
 
 ```bash
-cd cli
 pip install build twine
 python -m build
 twine upload dist/*

@@ -49,6 +49,8 @@ class _MockAPIHandler(BaseHTTPRequestHandler):
 
     # Class-level store so tests can inspect what the server received.
     last_aif_body: dict = {}
+    last_aif_headers: dict = {}
+    last_auth_header: str | None = None
     last_supplement_body: bytes = b""
     last_supplement_headers: dict = {}
     last_supplement_query: str = ""
@@ -74,10 +76,33 @@ class _MockAPIHandler(BaseHTTPRequestHandler):
         self.send_response(404)
         self.end_headers()
 
+    def _maybe_reject(self) -> bool:
+        """Simulate an auth failure when the caller sends a magic bearer token.
+
+        Lets the subprocess tests drive the CLI's real 401/403 messaging path
+        deterministically without a live, secured backend:
+          Authorization: Bearer FORCE401 → 401
+          Authorization: Bearer FORCE403 → 403
+        Returns True (after responding) when it handled the request.
+        """
+        token = self.headers.get("Authorization") or ""
+        if token == "Bearer FORCE401":
+            self.send_response(401)
+            self.end_headers()
+            return True
+        if token == "Bearer FORCE403":
+            self.send_response(403)
+            self.end_headers()
+            return True
+        return False
+
     # ── GET ───────────────────────────────────────────────────────────────────
 
     def do_GET(self):
         p = self.path.split("?")[0]
+
+        if self._maybe_reject():
+            return
 
         if p == "/api/v1/health":
             self._ok({"status": "ok"})
@@ -148,6 +173,9 @@ class _MockAPIHandler(BaseHTTPRequestHandler):
         p = self.path.split("?")[0]
         raw = self._body()
 
+        if self._maybe_reject():
+            return
+
         if p == "/api/v1/projects/":
             self._ok({"project_id": MOCK_PROJECT_ID})
 
@@ -215,6 +243,8 @@ class _MockAPIHandler(BaseHTTPRequestHandler):
                 _MockAPIHandler.last_aif_body = json.loads(raw) if raw else {}
             except Exception:
                 _MockAPIHandler.last_aif_body = {}
+            _MockAPIHandler.last_aif_headers = dict(self.headers.items())
+            _MockAPIHandler.last_auth_header = self.headers.get("Authorization")
             self._ok({
                 "metrics": {
                     "groundedness":           0.85,

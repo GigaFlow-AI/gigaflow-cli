@@ -11,7 +11,7 @@ import sys
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from gigaflow import _fmt
-from gigaflow._http import api
+from gigaflow._http import api, auth_error_hint, unreachable_hint
 
 _HINT = (
     "Hint: query the `trace_metrics` view — it has one row per trace with all AIF columns.\n"
@@ -73,19 +73,33 @@ def register(sub) -> None:
 def _handle_compute(args, base_url: str) -> None:
     _fmt.header("GigaFlow Compute")
 
-    api_key = os.environ.get("OPENAI_API_KEY")
-    if not api_key:
+    # The OpenAI key is forwarded in the request BODY for the backend's LLM
+    # calls. It is *separate* from the gigaflow API key (args.api_key), which
+    # authorises the protected /aif compute endpoint via the Authorization
+    # header. Both can be required at once on a hosted backend.
+    openai_key = os.environ.get("OPENAI_API_KEY")
+    if not openai_key:
         _fmt.fail(
             "OPENAI_API_KEY not set. Add it to gigaflow.env or export it before running."
         )
         sys.exit(1)
 
+    gigaflow_key = getattr(args, "api_key", None)
+
     # ── 1. Run the user's SQL to collect trace IDs ───────────────────────────
     _fmt.section("Selecting traces")
-    status, result = api(base_url, "POST", "/query/", {"sql": args.sql, "limit": 5000})
+    status, result = api(
+        base_url, "POST", "/query/", {"sql": args.sql, "limit": 5000},
+        api_key=gigaflow_key,
+    )
     if status != 200:
-        _fmt.fail(f"Query failed ({status}): {result}")
-        print(f"\n{_HINT}")
+        if status is None:
+            _fmt.fail(unreachable_hint(base_url))
+        elif status in (401, 403):
+            _fmt.fail(auth_error_hint())
+        else:
+            _fmt.fail(f"Query failed ({status}): {result}")
+            print(f"\n{_HINT}")
         sys.exit(1)
 
     columns = result.get("columns", [])
@@ -113,7 +127,7 @@ def _handle_compute(args, base_url: str) -> None:
         trace_ids = all_ids
         _fmt.info(f"--force: will recompute {len(trace_ids)} trace(s)")
     else:
-        trace_ids, skipped = _partition_computed(base_url, all_ids)
+        trace_ids, skipped = _partition_computed(base_url, all_ids, gigaflow_key)
         if skipped:
             _fmt.info(f"Skipping {len(skipped)} trace(s) with existing AIF results (use --force to recompute)")
         if not trace_ids:
@@ -123,7 +137,9 @@ def _handle_compute(args, base_url: str) -> None:
     _fmt.section(f"Computing AIF for {len(trace_ids)} trace(s)  [concurrency={args.concurrency}]")
 
     # ── 3. Build the request body ────────────────────────────────────────────
-    body: dict = {"api_key": api_key}
+    # "api_key" here is the OpenAI key the backend uses for its LLM calls — NOT
+    # the gigaflow auth key (that rides in the Authorization header below).
+    body: dict = {"api_key": openai_key}
     if args.model:
         body["model"] = args.model
     if args.k_threshold is not None:
@@ -135,7 +151,10 @@ def _handle_compute(args, base_url: str) -> None:
     width = len(str(len(trace_ids)))
 
     with ThreadPoolExecutor(max_workers=args.concurrency) as pool:
-        futures = {pool.submit(_run_one, base_url, tid, body): tid for tid in trace_ids}
+        futures = {
+            pool.submit(_run_one, base_url, tid, body, gigaflow_key): tid
+            for tid in trace_ids
+        }
         for i, future in enumerate(as_completed(futures), 1):
             tid = futures[future]
             short = tid[:8]
@@ -164,12 +183,17 @@ def _handle_compute(args, base_url: str) -> None:
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
 
-def _partition_computed(base_url: str, trace_ids: list[str]) -> tuple[list[str], list[str]]:
+def _partition_computed(
+    base_url: str, trace_ids: list[str], gigaflow_key: str | None = None
+) -> tuple[list[str], list[str]]:
     """Return (to_compute, already_computed) by checking trace_metrics."""
     # Build a query to find which of the given IDs already have AIF (run_id IS NOT NULL)
     quoted = ", ".join(f"'{tid}'" for tid in trace_ids)
     sql = f"SELECT trace_id FROM trace_metrics WHERE trace_id IN ({quoted}) AND run_id IS NOT NULL"
-    status, result = api(base_url, "POST", "/query/", {"sql": sql, "limit": 5000})
+    status, result = api(
+        base_url, "POST", "/query/", {"sql": sql, "limit": 5000},
+        api_key=gigaflow_key,
+    )
     if status != 200:
         # If check fails, be conservative and compute all
         return trace_ids, []
@@ -186,7 +210,9 @@ def _partition_computed(base_url: str, trace_ids: list[str]) -> tuple[list[str],
     return to_compute, already_done
 
 
-def _run_one(base_url: str, trace_id: str, body: dict) -> tuple[float, float, dict]:
+def _run_one(
+    base_url: str, trace_id: str, body: dict, gigaflow_key: str | None = None
+) -> tuple[float, float, dict]:
     """Run AIF for a single trace. Returns (groundedness, tool_consumption, token_usage).
 
     ``token_usage`` is the raw dict as serialised by ``AIFTokenUsage.model_dump``:
@@ -194,8 +220,14 @@ def _run_one(base_url: str, trace_id: str, body: dict) -> tuple[float, float, di
     Missing for old runs persisted before cost instrumentation shipped — the
     caller is expected to handle an empty dict gracefully.
     """
-    status, resp = api(base_url, "POST", f"/aif/{trace_id}", body)
+    status, resp = api(
+        base_url, "POST", f"/aif/{trace_id}", body, api_key=gigaflow_key
+    )
     if status != 200:
+        if status is None:
+            raise RuntimeError(unreachable_hint(base_url))
+        if status in (401, 403):
+            raise RuntimeError(auth_error_hint())
         detail = resp.get("detail", str(resp)) if isinstance(resp, dict) else str(resp)
         raise RuntimeError(detail)
     metrics = resp.get("metrics", {}) if isinstance(resp, dict) else {}

@@ -3,8 +3,18 @@
 import sys
 
 from gigaflow import _config, _fmt
-from gigaflow._http import api
+from gigaflow._http import api, auth_error_hint, unreachable_hint
 from gigaflow._setup import do_sync, run_wizard
+
+
+def _fail(status, resp, base_url: str, what: str) -> None:
+    if status is None:
+        _fmt.fail(unreachable_hint(base_url))
+    elif status in (401, 403):
+        _fmt.fail(auth_error_hint())
+    else:
+        _fmt.fail(f"Failed to {what} ({status}): {resp}")
+    sys.exit(1)
 
 
 def register(sub) -> None:
@@ -20,7 +30,7 @@ def register(sub) -> None:
 
 # ── shared helper ──────────────────────────────────────────────────────────────
 
-def _ensure_ready(base_url: str, auto_sync: bool = True) -> dict | None:
+def _ensure_ready(base_url: str, auto_sync: bool = True, api_key: str | None = None) -> dict | None:
     config = _config.load()
     if not config.get("datasource_id"):
         print("No configuration found. Running setup wizard first...")
@@ -31,24 +41,23 @@ def _ensure_ready(base_url: str, auto_sync: bool = True) -> dict | None:
         return config  # wizard already synced
     if auto_sync:
         _fmt.section("Syncing")
-        do_sync(base_url, config["datasource_id"])
+        do_sync(base_url, config["datasource_id"], api_key)
     return config
 
 
 # ── handlers ───────────────────────────────────────────────────────────────────
 
 def _handle_traces(args, base_url: str) -> None:
-    config = _ensure_ready(base_url, not args.no_sync)
+    config = _ensure_ready(base_url, not args.no_sync, getattr(args, "api_key", None))
     if config is None:
         sys.exit(1)
 
     _fmt.section("Traces")
     project_id = config.get("project_id")
     path = f"/traces/?project_id={project_id}&limit=1000" if project_id else "/traces/?limit=1000"
-    status, resp = api(base_url, "GET", path)
+    status, resp = api(base_url, "GET", path, api_key=getattr(args, "api_key", None))
     if status != 200:
-        _fmt.fail(f"Failed to list traces: {resp}")
-        sys.exit(1)
+        _fail(status, resp, base_url, "list traces")
 
     traces = resp.get("traces", [])
 
@@ -66,15 +75,14 @@ def _handle_traces(args, base_url: str) -> None:
 
 
 def _handle_spans(args, base_url: str) -> None:
-    config = _ensure_ready(base_url, not args.no_sync)
+    config = _ensure_ready(base_url, not args.no_sync, getattr(args, "api_key", None))
     if config is None:
         sys.exit(1)
 
     _fmt.section(f"Spans for trace {args.trace_id[:8]}…")
-    status, resp = api(base_url, "GET", f"/traces/{args.trace_id}/spans")
+    status, resp = api(base_url, "GET", f"/traces/{args.trace_id}/spans", api_key=getattr(args, "api_key", None))
     if status != 200:
-        _fmt.fail(f"Failed to get spans ({status}): {resp}")
-        sys.exit(1)
+        _fail(status, resp, base_url, "get spans")
 
     spans = resp if isinstance(resp, list) else resp.get("spans", [])
 
