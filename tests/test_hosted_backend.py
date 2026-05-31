@@ -477,3 +477,65 @@ def test_http_error_status_not_retried(monkeypatch):
     status, _ = _http.api("http://x/api/v1", "GET", "/health", api_key="bad")
     assert status == 401
     assert calls["n"] == 1  # not retried despite being a GET
+
+
+# ── sync honors the resolved api key (regression: dropped for sync/auto-sync) ──
+
+
+def test_handle_sync_forwards_resolved_api_key(monkeypatch):
+    """`gigaflow sync` must thread the resolved key (flag/env/config) into do_sync."""
+    from gigaflow.commands import setup as setup_cmd
+
+    captured = {}
+
+    def fake_do_sync(base_url, datasource_id, api_key=None):
+        captured["api_key"] = api_key
+        return (0, 0)
+
+    monkeypatch.setattr(setup_cmd, "do_sync", fake_do_sync)
+    monkeypatch.setattr(setup_cmd._config, "load", lambda: {"datasource_id": "ds1"})
+
+    args = type("Args", (), {"api_key": "gf_resolved"})()
+    setup_cmd._handle_sync(args, "http://x/api/v1")
+
+    assert captured["api_key"] == "gf_resolved"
+
+
+def test_ensure_ready_forwards_resolved_api_key(monkeypatch):
+    """Auto-sync in `gigaflow traces`/`spans` must also forward the resolved key."""
+    from gigaflow.commands import traces as traces_cmd
+
+    captured = {}
+
+    def fake_do_sync(base_url, datasource_id, api_key=None):
+        captured["api_key"] = api_key
+        return (0, 0)
+
+    monkeypatch.setattr(traces_cmd, "do_sync", fake_do_sync)
+    monkeypatch.setattr(traces_cmd._config, "load", lambda: {"datasource_id": "ds1"})
+
+    traces_cmd._ensure_ready("http://x/api/v1", auto_sync=True, api_key="gf_resolved")
+
+    assert captured["api_key"] == "gf_resolved"
+
+
+# ── config show redacts saved secrets ─────────────────────────────────────────
+
+
+def test_config_show_redacts_api_key():
+    from gigaflow.commands import config as config_cmd
+
+    cfg = {"backend_url": "https://api.example/api/v1", "api_key": "gf_live_secret"}
+    redacted = config_cmd._redact(cfg)
+
+    assert redacted["api_key"] == "****"
+    assert redacted["backend_url"] == "https://api.example/api/v1"
+    # original dict must not be mutated.
+    assert cfg["api_key"] == "gf_live_secret"
+
+
+def test_config_show_without_api_key_is_unchanged():
+    from gigaflow.commands import config as config_cmd
+
+    cfg = {"backend_url": "https://api.example/api/v1"}
+    assert config_cmd._redact(cfg) == cfg

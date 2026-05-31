@@ -19,6 +19,14 @@ def _handle_no_action(args, base_url: str) -> None:
     argparse.ArgumentParser(prog="gigaflow config").parse_args(["--help"])
 
 
+def _redact(config: dict) -> dict:
+    """Mask secrets before displaying config so `config show` never leaks them."""
+    redacted = dict(config)
+    if redacted.get("api_key"):
+        redacted["api_key"] = "****"
+    return redacted
+
+
 def _handle_show(args, base_url: str) -> None:
     config = _config.load()
     if not config:
@@ -26,7 +34,7 @@ def _handle_show(args, base_url: str) -> None:
         print("  Run:  gigaflow setup")
     else:
         print()
-        print(json.dumps(config, indent=2))
+        print(json.dumps(_redact(config), indent=2))
     print()
 
 

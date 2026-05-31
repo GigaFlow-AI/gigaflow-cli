@@ -37,7 +37,7 @@ def _handle_sync(args, base_url: str) -> None:
         sys.exit(1)
     _fmt.header("GigaFlow Sync")
     _fmt.section("Syncing")
-    result = do_sync(base_url, config["datasource_id"])
+    result = do_sync(base_url, config["datasource_id"], getattr(args, "api_key", None))
     if result is None:
         sys.exit(1)
     ui_url = base_url.replace("/api/v1", "").rstrip("/") + "/"

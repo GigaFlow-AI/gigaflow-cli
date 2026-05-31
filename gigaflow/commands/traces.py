@@ -30,7 +30,7 @@ def register(sub) -> None:
 
 # ── shared helper ──────────────────────────────────────────────────────────────
 
-def _ensure_ready(base_url: str, auto_sync: bool = True) -> dict | None:
+def _ensure_ready(base_url: str, auto_sync: bool = True, api_key: str | None = None) -> dict | None:
     config = _config.load()
     if not config.get("datasource_id"):
         print("No configuration found. Running setup wizard first...")
@@ -41,14 +41,14 @@ def _ensure_ready(base_url: str, auto_sync: bool = True) -> dict | None:
         return config  # wizard already synced
     if auto_sync:
         _fmt.section("Syncing")
-        do_sync(base_url, config["datasource_id"])
+        do_sync(base_url, config["datasource_id"], api_key)
     return config
 
 
 # ── handlers ───────────────────────────────────────────────────────────────────
 
 def _handle_traces(args, base_url: str) -> None:
-    config = _ensure_ready(base_url, not args.no_sync)
+    config = _ensure_ready(base_url, not args.no_sync, getattr(args, "api_key", None))
     if config is None:
         sys.exit(1)
 
@@ -75,7 +75,7 @@ def _handle_traces(args, base_url: str) -> None:
 
 
 def _handle_spans(args, base_url: str) -> None:
-    config = _ensure_ready(base_url, not args.no_sync)
+    config = _ensure_ready(base_url, not args.no_sync, getattr(args, "api_key", None))
     if config is None:
         sys.exit(1)
 
