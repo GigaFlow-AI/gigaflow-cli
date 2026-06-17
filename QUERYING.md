@@ -52,6 +52,9 @@ gigaflow compute "SELECT trace_id FROM trace_metrics WHERE run_id IS NULL"
 | `--concurrency N` | 3 | Parallel trace workers |
 | `--model MODEL` | backend default | LLM used for atomisation |
 | `--k-threshold K` | 0.3 | Relevance threshold for `@K` metrics (0.0–1.0) |
+| `--attribution-mode {llm,embedding}` | backend default | Attribution backend. `llm` is the historical default; `embedding` uses cosine similarity (faster, no LLM cost). |
+| `--embedding-threshold T` | backend default | Cosine cutoff under `embedding_config.threshold` (only meaningful with `--attribution-mode embedding`) |
+| `--embedding-model MODEL` | backend default | Embedding model under `embedding_config.model` (only meaningful with `--attribution-mode embedding`) |
 
 **Requires:** `OPENAI_API_KEY` in environment or `gigaflow.env`.
 

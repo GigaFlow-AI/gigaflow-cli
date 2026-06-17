@@ -34,7 +34,16 @@ from _constants import (
 
 @pytest.fixture(scope="session")
 def installed_cli():
-    """pip install -e ./cli into the active Python environment (once per run)."""
+    """pip install -e ./cli into the active Python environment (once per run).
+
+    uv-managed venvs ship without pip, so bootstrap it via ensurepip first.
+    Cheap no-op when pip is already present.
+    """
+    subprocess.run(
+        [sys.executable, "-m", "ensurepip", "--upgrade"],
+        check=True,
+        capture_output=True,
+    )
     subprocess.run(
         [sys.executable, "-m", "pip", "install", "-e", str(CLI_DIR)],
         check=True,
